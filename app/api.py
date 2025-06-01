@@ -1,12 +1,11 @@
 import requests
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 BASE_URL = "https://api.open-meteo.com/v1"
 
-async def get_weather_data(city: str) -> Optional[Dict]:
-    """Fetch current weather data for a given city."""
+async def get_coordinates(city: str) -> Tuple[Optional[float], Optional[float], Optional[str]]:
+    """Get coordinates for a city using geocoding API."""
     try:
-        # First, get coordinates for the city using geocoding API
         geocoding_url = f"https://geocoding-api.open-meteo.com/v1/search"
         geocoding_params = {
             'name': city,
@@ -20,11 +19,22 @@ async def get_weather_data(city: str) -> Optional[Dict]:
         geocoding_data = geocoding_response.json()
         
         if not geocoding_data.get('results'):
-            return None
+            return None, None, None
             
         location = geocoding_data['results'][0]
-        lat, lon = location['latitude'], location['longitude']
-        
+        return location['latitude'], location['longitude'], location['name']
+    except requests.RequestException as e:
+        print(f"Error in geocoding: {e}")
+        return None, None, None
+
+async def get_weather_data(city: str) -> Optional[Dict]:
+    """Fetch current weather data for a given city."""
+    try:
+        # Get coordinates first
+        lat, lon, city_name = await get_coordinates(city)
+        if not lat or not lon:
+            return None
+            
         # Get weather data using coordinates
         weather_params = {
             'latitude': lat,
@@ -37,9 +47,12 @@ async def get_weather_data(city: str) -> Optional[Dict]:
         weather_response.raise_for_status()
         weather_data = weather_response.json()
         
+        if 'current' not in weather_data:
+            return None
+            
         # Format the response to match our application's needs
         return {
-            'name': location['name'],
+            'name': city_name,
             'main': {
                 'temp': weather_data['current']['temperature_2m'],
                 'humidity': weather_data['current']['relative_humidity_2m']
@@ -54,29 +67,18 @@ async def get_weather_data(city: str) -> Optional[Dict]:
     except requests.RequestException as e:
         print(f"Error fetching weather data: {e}")
         return None
+    except (KeyError, TypeError) as e:
+        print(f"Error processing weather data: {e}")
+        return None
 
 async def get_forecast_data(city: str) -> Optional[Dict]:
     """Fetch 7-day weather forecast for a given city."""
     try:
-        # First, get coordinates for the city
-        geocoding_url = f"https://geocoding-api.open-meteo.com/v1/search"
-        geocoding_params = {
-            'name': city,
-            'count': 1,
-            'language': 'en',
-            'format': 'json'
-        }
-        
-        geocoding_response = requests.get(geocoding_url, params=geocoding_params)
-        geocoding_response.raise_for_status()
-        geocoding_data = geocoding_response.json()
-        
-        if not geocoding_data.get('results'):
+        # Get coordinates first
+        lat, lon, _ = await get_coordinates(city)
+        if not lat or not lon:
             return None
             
-        location = geocoding_data['results'][0]
-        lat, lon = location['latitude'], location['longitude']
-        
         # Get forecast data
         forecast_params = {
             'latitude': lat,
@@ -89,6 +91,9 @@ async def get_forecast_data(city: str) -> Optional[Dict]:
         forecast_response.raise_for_status()
         forecast_data = forecast_response.json()
         
+        if 'daily' not in forecast_data:
+            return None
+            
         # Format the response
         return {
             'list': [
@@ -115,6 +120,9 @@ async def get_forecast_data(city: str) -> Optional[Dict]:
         }
     except requests.RequestException as e:
         print(f"Error fetching forecast data: {e}")
+        return None
+    except (KeyError, TypeError) as e:
+        print(f"Error processing forecast data: {e}")
         return None
 
 def get_weather_description(code: int) -> str:

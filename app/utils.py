@@ -18,7 +18,7 @@ def format_weather_data(data: dict) -> dict:
     }
 
 def format_forecast_data(data: dict) -> list:
-    """Format 5-day forecast data for display."""
+    """Format 7-day forecast data for display."""
     if not data:
         return []
     
