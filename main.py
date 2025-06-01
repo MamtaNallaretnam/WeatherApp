@@ -1,108 +1,456 @@
-from h2o_wave import Q, main, app, ui, on
+from h2o_wave import Q, app, main, ui, data
 from app.api import get_weather_data, get_forecast_data
-from app.utils import convert_temperature, format_weather_data, format_forecast_data
+from app.utils import convert_temperature
+
 
 @app('/')
 async def serve(q: Q):
     print("Serve function started.")
 
-    # Prioritize checking for clear button click
+    # Clear button
     if q.args.clear_button:
-        print("Clear button detected at start of serve. Calling handle_clear and returning.")
+        print("Clear button pressed.")
         await handle_clear(q)
-        # Return here to prevent further processing in serve for a clear click
-        return await q.page.save()
-
-    # Initialize the page theme and add static initial cards on the first visit
-    if not q.client.initialized:
-        print("Initializing theme and adding static initial cards.")
-        q.page.theme = 'h2o-light'  # Set a dark theme
-        # We can add the layout back later if needed, but keeping it simple for now
-        # q.page.layout = ui.layout(...)
-
-        
-
-        # Add the static header card
-        print("Adding header card.")
-        q.page['header'] = ui.header_card(
-            box='1 1 -1 1', # Place header at the top, spanning width
-            title='Weather Dashboard',
-            subtitle='Get real-time weather information',
-            color='primary'
-        )
-
-        q.client.initialized = True
-        q.client.temperature_unit = 'C'
-        q.client.favorite_locations = []
-
-        # Clear weather/forecast/error cards on initial load if they exist from previous state
-        # This prevents old search results from showing on a fresh visit.
-        # This logic remains, but is part of the initial load sequence now.
-        print("Initial load: Clearing dynamic cards.")
-        # Attempt to delete cards directly, even if they don't exist, wrapping in try-except for safety
-        try:
-            del q.page['weather']
-        except KeyError:
-            pass # Ignore if card doesn't exist
-        try:
-            del q.page['forecast']
-        except KeyError:
-            pass # Ignore if card's['forecast'] doesn't exist
-        try:
-            del q.page['error']
-        except KeyError:
-            pass # Ignore if card doesn't exist
-
-        # Initial save after setting up the static page elements
-        # This save is important for the initial rendering.
-        await q.page.save()
-
-    # Always add or update the search card so buttons are always visible
-    print("Always adding/updating search card.")
-    q.page['search'] = ui.form_card(
-        box='1 2 -1 3', # Place search card below header
-        items=[
-            ui.textbox(name='search', label='Enter city name', placeholder='e.g., London', required=True),
-            ui.buttons(items=[
-                ui.button(name='search_button', label='Search', primary=True),
-                ui.button(name='clear_button', label='Clear', icon='Cancel'),
-            ]),
-            ui.toggle(name='toggle_unit', label='Toggle °C/°F', value=q.client.temperature_unit == 'F')
-        ],
-    )
-
-    print("Checking for other button/toggle clicks in q.args.")
-    # Check if the search button was clicked by looking at q.args and manually call handler
-    if q.args.search_button:
-        print("Search button detected in q.args. Calling handle_search.")
-        await handle_search(q)
-    # If the toggle unit was clicked, call its handler
-    elif q.args.toggle_unit is not None:
-        print("Toggle unit detected in q.args. Calling handle_toggle_unit.")
-        await handle_toggle_unit(q)
-    # If none of the specific buttons/toggles were clicked, save the page to ensure updates are rendered
-    else:
-        print("No specific button/toggle clicked (excluding clear). Saving page.")
-        await q.page.save()
-
-
-@on('search_button')
-async def handle_search(q: Q):
-    # This handler is now primarily for structure/documentation. Logic is triggered via q.args check in serve.
-    print("handle_search function started via @on (fallback/debug).")
-    # The actual handling is now performed by the logic in serve triggered by q.args.search_button
-    # Keep the logic here for now, but know the serve check is primary.
-
-    city = q.args.search
-    print(f"Search query received: {city}")
-
-    if not city:
-        await handle_clear(q) # Use the handle_clear function
         return
 
-    # Clear previous dynamic cards (weather, forecast, error) before adding new ones
-    print("Clearing previous results.")
-    for card in ['weather', 'forecast', 'error']:
+    # Initialize page
+    if not q.client.initialized:
+        print("Initializing app.")
+        main_app(q)
+        q.client.initialized = True
+        q.client.temperature_unit = 'C'
+        q.client.theme = 'h2o-dark'  # Initialize theme
+        q.client.favorite_locations = []
+        search_view(q)
+        await q.page.save()
+        return
+
+    # Search or toggle handlers
+    if q.args.search_button:
+        print("Search button pressed.")
+        await handle_search(q)
+    elif q.args.toggle_unit:
+        print("Temperature unit toggle pressed.")
+        await handle_toggle_unit(q)
+    elif q.args.toggle_theme:
+        print("Theme toggle pressed.")
+        await handle_toggle_theme(q)
+    else:
+        search_view(q)
+        await q.page.save()
+
+async def handle_toggle_theme(q: Q):
+    print(f"Toggling theme. Current: {q.client.theme}")
+    q.client.theme = 'h2o-light' if q.client.theme == 'h2o-dark' else 'h2o-dark'
+    
+    # Update the layout with new theme
+    main_app(q)
+    
+    # Re-render the current view with new theme
+    current_city = q.args.search or (q.page.get('search') and q.page['search'].search.value)
+    if current_city:
+        q.args.search = current_city
+        await handle_search(q)
+    else:
+        search_view(q)
+        await q.page.save()
+
+
+# Main layout and header/footer
+def main_app(q: Q):
+    # Initialize theme if not exists
+    if not hasattr(q.client, 'theme') or q.client.theme is None:
+        q.client.theme = 'h2o-dark'
+        
+    q.page['layout'] = ui.meta_card(
+        box='meta',
+        theme=q.client.theme,  # Use dynamic theme
+        layouts=[
+            ui.layout(
+                breakpoint='xl',
+                zones=[
+                    ui.zone('header', size='80px'),
+                    ui.zone('body', direction=ui.ZoneDirection.ROW, zones=[
+                        ui.zone('sidebar', size='400px'),
+                        ui.zone('main', zones=[
+                            ui.zone('content'),
+                            ui.zone('content_chart', size='400px')
+                        ])
+                    ]),
+                    ui.zone('footer', size='60px')
+                ]
+            ),
+            # Tablet layout
+            ui.layout(
+                breakpoint='m',
+                zones=[
+                    ui.zone('header', size='80px'),
+                    ui.zone('body', zones=[
+                        ui.zone('sidebar', size='350px'),
+                        ui.zone('content'),
+                        ui.zone('content_chart', size='350px')
+                    ]),
+                    ui.zone('footer', size='60px')
+                ]
+            ),
+            # Mobile layout
+            ui.layout(
+                breakpoint='xs',
+                zones=[
+                    ui.zone('header', size='80px'),
+                    ui.zone('body', zones=[
+                        ui.zone('sidebar'),
+                        ui.zone('content'),
+                        ui.zone('content_chart')
+                    ]),
+                    ui.zone('footer', size='60px')
+                ]
+            )
+        ]
+    )
+
+    q.page['header'] = ui.header_card(
+        box='header',
+        title='🌤️ Weather Dashboard',
+        subtitle='Get real-time weather information',
+        icon='CloudWeather'
+    )
+
+    q.page['footer'] = ui.footer_card(
+        box='footer',
+        caption='Mamta Nallaretnam ©2025'
+    )
+
+
+# Search box and controls
+def search_view(q: Q):
+    # Initialize theme if not exists
+    if not hasattr(q.client, 'theme') or q.client.theme is None:
+        q.client.theme = 'h2o-dark'
+        
+    q.page['search'] = ui.form_card(
+        box='sidebar',
+        title='🔍 Search Weather',
+        items=[
+            ui.textbox(
+                name='search', 
+                label='Enter city name', 
+                placeholder='e.g., London, Dubai, New York', 
+                required=True,
+                value=q.args.search if hasattr(q.args, 'search') else ''
+            ),
+            ui.buttons(items=[
+                ui.button(name='search_button', label='Search', primary=True, icon='Search'),
+                ui.button(name='clear_button', label='Clear', icon='Cancel'),
+            ]),
+            ui.separator(),
+            ui.toggle(
+                name='toggle_unit', 
+                label=f'Temperature Unit (Currently °{q.client.temperature_unit})', 
+                value=q.client.temperature_unit == 'F',
+                trigger=True
+            ),
+            ui.toggle(
+                name='toggle_theme', 
+                label=f'🌙 Dark Theme' if q.client.theme == 'h2o-dark' else '☀️ Light Theme',
+                value=q.client.theme == 'h2o-dark',
+                trigger=True
+            )
+        ]
+    )
+
+# Map weather condition codes to icons
+def weather_icon(condition_code: int) -> str:
+    # OpenWeatherMap icon codes prefix mapping
+    # https://openweathermap.org/weather-conditions
+    if condition_code is None:
+        return 'CloudWeather'    
+    if 200 <= condition_code < 300:
+        return 'WeatherLightning'  # Thunderstorm
+    elif 300 <= condition_code < 500:
+        return 'WeatherRainShower'  # Drizzle
+    elif 500 <= condition_code < 600:
+        return 'WeatherRain'  # Rain
+    elif 600 <= condition_code < 700:
+        return 'WeatherSnow'  # Snow
+    elif 700 <= condition_code < 800:
+        return 'WeatherFog'  # Atmosphere (mist, smoke, etc)
+    elif condition_code == 800:
+        return 'WeatherSunny'  # Clear
+    elif 801 <= condition_code < 900:
+        return 'WeatherCloudy'  # Clouds
+    else:
+        return 'CloudWeather'  # Default icon
+    
+def get_weather_emoji(condition_code: int) -> str:
+    """Get emoji for weather condition"""
+    if condition_code is None:
+        return '🌤️'
+    if 200 <= condition_code < 300:
+        return '⛈️'  # Thunderstorm
+    elif 300 <= condition_code < 500:
+        return '🌦️'  # Drizzle
+    elif 500 <= condition_code < 600:
+        return '🌧️'  # Rain
+    elif 600 <= condition_code < 700:
+        return '❄️'  # Snow
+    elif 700 <= condition_code < 800:
+        return '🌫️'  # Fog/Mist
+    elif condition_code == 800:
+        return '☀️'  # Clear
+    elif 801 <= condition_code < 900:
+        return '☁️'  # Clouds
+    else:
+        return '🌤️'  # Default
+
+
+# Weather info card with icon
+def weather_view(q: Q, weather_data):
+    icon_id = weather_data.get('weather', [{}])[0].get('id', None)
+    weather_emoji = get_weather_emoji(icon_id)
+
+    temp = convert_temperature(weather_data['main']['temp'], q.client.temperature_unit)
+    feels_like = convert_temperature(weather_data['main']['feels_like'], q.client.temperature_unit)
+
+    q.page['weather'] = ui.form_card(
+        box='content',
+        title=f"{weather_emoji} Weather in {weather_data['name']}",
+        items=[
+            ui.text(f"**Temperature:** {temp:.1f}°{q.client.temperature_unit}", size='xl'),
+            ui.text(f"**Feels like:** {feels_like:.1f}°{q.client.temperature_unit}"),
+            ui.separator(),
+            ui.text(f"**💧 Humidity:** {weather_data['main']['humidity']}%"),
+            ui.text(f"**💨 Wind Speed:** {weather_data['wind']['speed']} m/s"),
+            ui.text(f"**📊 Pressure:** {weather_data['main']['pressure']} hPa"),
+            ui.separator(),
+            ui.text(f"**📝 Description:** {weather_data['weather'][0]['description'].title()}"),
+        ]
+    )
+
+
+# Forecast table
+def forecast_view(q: Q, forecast_data):
+    daily = {}
+    for item in forecast_data['list']:
+        date = item['dt_txt'].split(' ')[0]
+        if date not in daily:
+            daily[date] = item
+    
+    rows = []
+    for i, (date, day) in enumerate(list(daily.items())[:7]):
+        weather_emoji = get_weather_emoji(day['weather'][0]['id'])
+        
+        # Safe temperature unit access
+        temp_unit = 'C'  # Default to Celsius
+        speed_unit = 'metric'  # Default to metric
+        
+        if q.client and hasattr(q.client, 'temperature_unit'):
+            temp_unit = q.client.temperature_unit
+        elif hasattr(q, 'client') and q.client and 'temperature_unit' in q.client:
+            temp_unit = q.client['temperature_unit']
+        
+        if q.client and hasattr(q.client, 'speed_unit'):
+            speed_unit = q.client.speed_unit
+        elif hasattr(q, 'client') and q.client and 'speed_unit' in q.client:
+            speed_unit = q.client['speed_unit']
+        
+        temp = convert_temperature(day['main']['temp'], temp_unit)
+        feels_like = convert_temperature(day['main']['feels_like'], temp_unit)
+        
+        # Get wind speed and convert to appropriate units
+        wind_speed = day.get('wind', {}).get('speed', 0)  # m/s from API
+        
+        # Handle case where wind speed is 0 or convert units
+        if wind_speed == 0:
+            wind_display = "Calm"
+        else:
+            if speed_unit == 'imperial':
+                wind_display = f"{wind_speed * 2.237:.1f} mph"  # Convert m/s to mph
+            else:
+                wind_display = f"{wind_speed * 3.6:.1f} km/h"   # Convert m/s to km/h
+        
+        rows.append([
+            date,
+            f"{temp:.1f}°{temp_unit}",
+            f"{feels_like:.1f}°{temp_unit}",
+            wind_display,
+            f"{weather_emoji} {day['weather'][0]['description'].title()}"
+        ])
+    
+    q.page['forecast'] = ui.form_card(
+        box='content',
+        title='📅 7-Day Forecast',
+        items=[
+            ui.table(
+                name='forecast_table',
+                columns=[
+                    ui.table_column(name='date', label='Date', min_width='200px'),
+                    ui.table_column(name='temp', label='Temperature', min_width='300px'),
+                    ui.table_column(name='feels_like', label='Feels Like', min_width='300px'),
+                    ui.table_column(name='wind', label='Wind Speed', min_width='300px'),
+                    ui.table_column(name='desc', label='Description', min_width='200px'),
+                ],
+                rows=[ui.table_row(name=f'row_{i}', cells=row) for i, row in enumerate(rows)]
+            )
+        ]
+    )
+
+# Improved temperature trend line chart for 7-day forecast
+def forecast_chart_view(q: Q, forecast_data):
+    print("rendering forecast chart...")
+    
+    daily = {}
+    for item in forecast_data['list']:
+        date = item['dt_txt'].split(' ')[0]
+        if date not in daily:
+            daily[date] = item
+    
+    # Try multiple approaches for the graphical chart
+    try:
+        # Approach 1: Use simple day numbers
+        chart_data = []
+        for i, (date, day) in enumerate(list(daily.items())[:7]):
+            temp = float(convert_temperature(day['main']['temp'], q.client.temperature_unit))
+            chart_data.append([i + 1, temp])  # Use 1, 2, 3, 4, 5, 6, 7
+        
+        print("forecast_chart_view: chart data =", chart_data)
+        
+        q.page['forecast_chart'] = ui.plot_card(
+            box='content_chart',
+            title=f'📈 7-Day Temperature Trend (°{q.client.temperature_unit})',
+            data=data('day temperature', len(chart_data), rows=chart_data),
+            plot=ui.plot([
+                ui.mark(
+                    type='line',
+                    x='=day',
+                    y='=temperature',
+                    color='$blue'
+                ),
+                ui.mark(
+                    type='point',
+                    x='=day',
+                    y='=temperature',
+                    size=12,
+                    color='$red'
+                )
+            ])
+        )
+        
+        print("Successfully created graphical chart")
+        
+    except Exception as e:
+        print(f"Graphical chart failed: {e}")
+        
+        # Try approach 2: Different data format
+        try:
+            chart_data = []
+            for i, (date, day) in enumerate(list(daily.items())[:7]):
+                temp = float(convert_temperature(day['main']['temp'], q.client.temperature_unit))
+                chart_data.append([f"Day {i+1}", temp])
+            
+            print("forecast_chart_view: string chart data =", chart_data)
+            
+            q.page['forecast_chart'] = ui.plot_card(
+                box='content_chart',
+                title=f'📈 7-Day Temperature Trend (°{q.client.temperature_unit})',
+                data=data('day temperature', len(chart_data), rows=chart_data),
+                plot=ui.plot([
+                    ui.mark(
+                        type='line',
+                        x='=day',
+                        y='=temperature',
+                        color='$blue'
+                    ),
+                    ui.mark(
+                        type='point',
+                        x='=day',
+                        y='=temperature',
+                        size=12,
+                        color='$red'
+                    )
+                ])
+            )
+            
+            print("Successfully created string-based graphical chart")
+            
+        except Exception as e2:
+            print(f"Both graphical approaches failed: {e2}")
+            
+            # Enhanced fallback to text-based chart
+            chart_items = []
+            temps = []
+            
+            for date, day in list(daily.items())[:7]:
+                temp = convert_temperature(day['main']['temp'], q.client.temperature_unit)
+                temps.append(temp)
+            
+            min_temp = min(temps) if temps else 0
+            max_temp = max(temps) if temps else 1
+            
+            # Create header for the text chart
+            chart_items.append(ui.text(f"**📈 Temperature Trend (°{q.client.temperature_unit})**", size='l'))
+            chart_items.append(ui.separator())
+            
+            for i, (date, day) in enumerate(list(daily.items())[:7]):
+                day_num = date.split('-')[2]
+                temp = convert_temperature(day['main']['temp'], q.client.temperature_unit)
+                weather_emoji = get_weather_emoji(day['weather'][0]['id'])
+                
+                # Create a better visual bar representation
+                if max_temp > min_temp:
+                    bar_length = int((temp - min_temp) / (max_temp - min_temp) * 25)
+                else:
+                    bar_length = 12
+                    
+                bar = "▓" * max(1, bar_length)
+                
+                chart_items.append(
+                    ui.text(f"**Day {i+1}** ({day_num}): {temp:.1f}°{q.client.temperature_unit} {weather_emoji}")
+                )
+                chart_items.append(
+                    ui.text(f"`{bar}` {temp:.1f}°{q.client.temperature_unit}")
+                )
+                
+                if i < 6:  # Don't add separator after last item
+                    chart_items.append(ui.separator())
+            
+            q.page['forecast_chart'] = ui.form_card(
+                box='content_chart',
+                title=f'📈 7-Day Temperature Trend (°{q.client.temperature_unit})',
+                items=chart_items
+            )
+            
+            print("Created enhanced text chart as fallback")
+    
+    print("forecast chart creation completed")
+
+# City not found error
+def error_view(q: Q):
+    q.page['error'] = ui.form_card(
+        box='content',
+        title='❌ Error',
+        items=[
+            ui.text('**City not found!**', size='xl'),
+            ui.text('Please try again with a different city name.'),
+            ui.text('**Suggestions:**'),
+            ui.text('• Check the spelling of the city name'),
+            ui.text('• Try including the country (e.g., "London, UK")'),
+            ui.text('• Use major city names in the region'),
+        ]
+    )
+
+
+# Search button logic
+async def handle_search(q: Q):
+    city = q.args.search
+    if not city:
+        print("No city entered. Clearing.")
+        await handle_clear(q)
+        return
+
+    print(f"Searching for city: {city}")
+
+    for card in ['weather', 'forecast', 'forecast_chart', 'error']:
         try:
             del q.page[card]
         except KeyError:
@@ -111,119 +459,42 @@ async def handle_search(q: Q):
     weather_data = await get_weather_data(city)
     forecast_data = await get_forecast_data(city)
 
-    print(f"Weather data received: {weather_data is not None}")
-    print(f"Forecast data received: {forecast_data is not None}")
-
     if weather_data:
-        print(f"Adding weather card for {weather_data['name']}.")
-        q.page['weather'] = ui.form_card(
-            box='1 4 -1 6', # Place weather card below search
-            title=f"Weather in {weather_data['name']}",
-            items=[
-                ui.text(f"Temperature: {convert_temperature(weather_data['main']['temp'], q.client.temperature_unit)}°{q.client.temperature_unit}"),
-                ui.text(f"Humidity: {weather_data['main']['humidity']}%"),
-                ui.text(f"Wind Speed: {weather_data['wind']['speed']} m/s"),
-                ui.text(f"Description: {weather_data['weather'][0]['description'].capitalize()}"),
-            ]
-        )
-
+        weather_view(q, weather_data)
         if forecast_data and forecast_data.get('list'):
-            print("Adding forecast card.")
-            table_rows = []
-            daily_forecasts = {}
-            for item in forecast_data['list']:
-                date = item['dt_txt'].split(' ')[0]
-                if date not in daily_forecasts: # Get only one forecast per day
-                    daily_forecasts[date] = item
-
-            # Limit to 7 days as per requirements, even if API returns more
-            for date, day_data in list(daily_forecasts.items())[:7]:
-                table_rows.append([
-                    date,
-                    f"{convert_temperature(day_data['main']['temp'], q.client.temperature_unit)}°{q.client.temperature_unit}",
-                    day_data['weather'][0]['description'].capitalize()
-                ])
-
-            q.page['forecast'] = ui.form_card(
-                box='1 6 -1 10', # Place forecast card below weather
-                title='7-Day Forecast',
-                items=[
-                    ui.table(
-                        name='forecast_table',
-                        columns=[
-                            ui.table_column(name='date', label='Date', sortable=True),
-                            ui.table_column(name='temp', label='Temperature', sortable=True),
-                            ui.table_column(name='desc', label='Description', sortable=True),
-                        ],
-                        rows=[
-                            ui.table_row(name=f'row_{i}', cells=row_data)
-                            for i, row_data in enumerate(table_rows)
-                        ]
-                    )
-                ]
-            )
+            forecast_view(q, forecast_data)
+            print("calling forecast chart view...")
+            forecast_chart_view(q, forecast_data)
     else:
-        print("City not found. Adding error card.")
-        q.page['error'] = ui.form_card(
-            box='1 7 -1 12', # Place error card in the same general area as weather
-            items=[
-                ui.text_xl('City not found. Please try again with a different city name.')
-            ]
-        )
+        error_view(q)
 
-    print("Saving page after search.")
+    # Update search box to show current city
+    search_view(q)
     await q.page.save()
 
 
-@on('toggle_unit')
+# Toggle °C/°F logic
 async def handle_toggle_unit(q: Q):
-     # This handler is now primarily for structure/documentation. Logic is triggered via q.args check in serve.
-    print("handle_toggle_unit function started via @on (fallback/debug).")
-    # The actual handling is now performed by the logic in serve triggered by q.args.toggle_unit
-    # Keep the logic here for now, but know the serve check is primary.
-
-    print("Toggle unit clicked.")
+    print(f"Toggling temperature unit. Current: {q.client.temperature_unit}")
     q.client.temperature_unit = 'F' if q.client.temperature_unit == 'C' else 'C'
-    # We need the current search query to re-run the search. Access from the search card.
-    current_city = q.page['search'].search.value if 'search' in q.page and hasattr(q.page['search'], 'search') else None
 
+    current_city = q.args.search or (q.page.get('search') and q.page['search'].search.value)
     if current_city:
-        print(f"Re-running search for {current_city} with new unit.")
-        q.args.search = current_city  # Set the search argument for handle_search
-        await handle_search(q)  # Re-run search handler to update display
+        q.args.search = current_city
+        await handle_search(q)
     else:
-        print("Saving page after toggle (no city displayed). Friendly reminder to search first!")
-        await q.page.save()  # Just save the page if no city is displayed
+        search_view(q)
+        await q.page.save()
 
 
-@on('clear_button')
 async def handle_clear(q: Q):
-    print("handle_clear function started via @on (fallback/debug).")
-    print("Clear button clicked.")
-    for card in ['weather', 'forecast', 'error']:
+    print("Clearing all cards.")
+    for card in ['weather', 'forecast','forecast_chart', 'error', 'search']:
         try:
             del q.page[card]
         except KeyError:
-            pass
-    
-    print(f'q.page type: {type(q.page)}')
-    # Clear search input. Access from the search card.
-    search_card = None
-
-    if hasattr(q.page, 'cards_map'):
-        search_card = q.page.cards_map.get('search', None)
-
-    if search_card and hasattr(search_card, 'search'):
-        search_card.search.value = ''
-        # Also reset the toggle to Celsius when clearing
-        if hasattr(search_card, 'toggle_unit'):
-             search_card.toggle_unit.value = False
-             q.client.temperature_unit = 'C'
-
-    print("Saving page after clear.")
+            pass  # card doesn't exist, no problem
+    # Reset search box
+    q.args.search = ''
+    search_view(q)
     await q.page.save()
-
-
-
-if __name__ == '__main__':
-    main()

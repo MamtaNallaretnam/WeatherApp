@@ -39,7 +39,7 @@ async def get_weather_data(city: str) -> Optional[Dict]:
         weather_params = {
             'latitude': lat,
             'longitude': lon,
-            'current': 'temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code',
+            'current': 'temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code,surface_pressure,apparent_temperature',
             'timezone': 'auto'
         }
         
@@ -50,18 +50,25 @@ async def get_weather_data(city: str) -> Optional[Dict]:
         if 'current' not in weather_data:
             return None
             
+        # Convert WMO weather code to OpenWeatherMap-style code for compatibility
+        wmo_code = weather_data['current']['weather_code']
+        condition_id = convert_wmo_to_owm_code(wmo_code)
+        
         # Format the response to match our application's needs
         return {
             'name': city_name,
             'main': {
                 'temp': weather_data['current']['temperature_2m'],
-                'humidity': weather_data['current']['relative_humidity_2m']
+                'feels_like': weather_data['current']['apparent_temperature'],
+                'humidity': weather_data['current']['relative_humidity_2m'],
+                'pressure': weather_data['current']['surface_pressure']
             },
             'wind': {
                 'speed': weather_data['current']['wind_speed_10m']
             },
             'weather': [{
-                'description': get_weather_description(weather_data['current']['weather_code'])
+                'id': condition_id,
+                'description': get_weather_description(wmo_code)
             }]
         }
     except requests.RequestException as e:
@@ -83,7 +90,7 @@ async def get_forecast_data(city: str) -> Optional[Dict]:
         forecast_params = {
             'latitude': lat,
             'longitude': lon,
-            'daily': 'temperature_2m_max,temperature_2m_min,precipitation_probability_max,weather_code',
+            'daily': 'temperature_2m_max,temperature_2m_min,precipitation_probability_max,weather_code,wind_speed_10m_max,relative_humidity_2m_max',
             'timezone': 'auto'
         }
         
@@ -98,23 +105,31 @@ async def get_forecast_data(city: str) -> Optional[Dict]:
         return {
             'list': [
                 {
-                    'dt_txt': date,
+                    'dt_txt': f"{date} 12:00:00",  # Add time component for compatibility
                     'main': {
                         'temp': (max_temp + min_temp) / 2,  # Average of max and min
-                        'humidity': None  # Not available in free API
+                        'feels_like': calculate_feels_like(
+                            (max_temp + min_temp) / 2, 
+                            humidity, 
+                            wind_speed
+                        ),  # Better feels_like calculation
+                        'humidity': humidity if humidity else 50  # Use actual humidity
                     },
                     'weather': [{
+                        'id': convert_wmo_to_owm_code(weather_code),
                         'description': get_weather_description(weather_code)
                     }],
                     'wind': {
-                        'speed': None  # Not available in daily forecast
+                        'speed': wind_speed if wind_speed else 0  # Use actual wind speed
                     }
                 }
-                for date, max_temp, min_temp, weather_code in zip(
+                for date, max_temp, min_temp, weather_code, wind_speed, humidity in zip(
                     forecast_data['daily']['time'],
                     forecast_data['daily']['temperature_2m_max'],
                     forecast_data['daily']['temperature_2m_min'],
-                    forecast_data['daily']['weather_code']
+                    forecast_data['daily']['weather_code'],
+                    forecast_data['daily'].get('wind_speed_10m_max', [0]*7),  # Default to 0 if not available
+                    forecast_data['daily'].get('relative_humidity_2m_max', [50]*7)  # Default to 50 if not available
                 )
             ]
         }
@@ -124,6 +139,48 @@ async def get_forecast_data(city: str) -> Optional[Dict]:
     except (KeyError, TypeError) as e:
         print(f"Error processing forecast data: {e}")
         return None
+
+def calculate_feels_like(temp_c, humidity, wind_speed_ms):
+    """
+    Calculate feels-like temperature using a simplified heat index/wind chill formula
+    """
+    if temp_c >= 27:  # Heat index for warm weather
+        # Simplified heat index calculation
+        feels_like = temp_c + (0.33 * (humidity / 100 * 6.105 * pow(2.718282, (17.27 * temp_c) / (237.7 + temp_c)))) - 0.7 * wind_speed_ms - 4
+    elif temp_c <= 10:  # Wind chill for cold weather
+        # Simplified wind chill calculation
+        wind_kmh = wind_speed_ms * 3.6
+        feels_like = 13.12 + 0.6215 * temp_c - 11.37 * pow(wind_kmh, 0.16) + 0.3965 * temp_c * pow(wind_kmh, 0.16)
+    else:
+        # For moderate temperatures, feels like is close to actual temperature
+        feels_like = temp_c - (wind_speed_ms * 0.5)  # Slight adjustment for wind
+    
+    return feels_like
+
+def convert_wmo_to_owm_code(wmo_code: int) -> int:
+    """Convert WMO weather code to OpenWeatherMap-style code for icon compatibility."""
+    if wmo_code == 0:
+        return 800  # Clear sky
+    elif wmo_code in [1, 2]:
+        return 801  # Few clouds / partly cloudy
+    elif wmo_code == 3:
+        return 804  # Overcast clouds
+    elif wmo_code in [45, 48]:
+        return 741  # Fog
+    elif wmo_code in [51, 53, 55]:
+        return 300  # Drizzle
+    elif wmo_code in [61, 63, 65]:
+        return 500  # Rain
+    elif wmo_code in [71, 73, 75, 77]:
+        return 600  # Snow
+    elif wmo_code in [80, 81, 82]:
+        return 520  # Rain showers
+    elif wmo_code in [85, 86]:
+        return 620  # Snow showers
+    elif wmo_code in [95, 96, 99]:
+        return 200  # Thunderstorm
+    else:
+        return 800  # Default to clear
 
 def get_weather_description(code: int) -> str:
     """Convert WMO weather code to description."""
