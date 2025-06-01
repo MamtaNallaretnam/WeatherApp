@@ -64,6 +64,7 @@ weather-app/
 │   └── test_app.py  # Unit tests
 ├── requirements.txt
 └── README.md
+|__ wave.yaml
 ```
 
 ## API Information
