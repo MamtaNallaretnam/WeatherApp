@@ -9,7 +9,9 @@ A feature-rich weather dashboard built with H2O Wave, providing real-time weathe
 - Temperature unit conversion (Celsius/Fahrenheit)
 - City search functionality
 - Favorite locations
-- Responsive design
+- Responsive design with ui emojis
+- changing theme(light or dark)
+- responsive forecast chart
 
 ## Prerequisites
 
@@ -20,8 +22,8 @@ A feature-rich weather dashboard built with H2O Wave, providing real-time weathe
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/weather-app.git
-cd weather-app
+git clone https://github.com/MamtaNallaretnam/WeatherApp.git
+cd WeatherApp
 ```
 
 2. Create a virtual environment and activate it:
@@ -39,7 +41,7 @@ pip install -r requirements.txt
 
 1. Start the Wave server:
 ```bash
-wave run app.main
+wave run main
 ```
 
 2. Open your browser and navigate to `http://localhost:10101`
@@ -47,7 +49,7 @@ wave run app.main
 ## Running Tests
 
 ```bash
-pytest tests/
+pytest -v
 ```
 
 ## Project Structure
@@ -55,13 +57,13 @@ pytest tests/
 ```
 weather-app/
 ├── app/
-│   ├── __init__.py
-│   ├── main.py      # Main application logic
+│   ├── __init__.py     
 │   ├── api.py       # API integration
 │   └── utils.py     # Utility functions
 ├── tests/
 │   ├── __init__.py
 │   └── test_app.py  # Unit tests
+|__ main.py    # Main application logic
 ├── requirements.txt
 └── README.md
 |__ wave.yaml
@@ -76,17 +78,7 @@ This application uses the Open-Meteo API (https://open-meteo.com/) which provide
 - Global coverage
 - Generous rate limits
 
-## Contributing
 
-1. Fork the repository
-2. Create a feature branch
-3. Commit your changes
-4. Push to the branch
-5. Create a Pull Request
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
 
 
 
