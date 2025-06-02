@@ -69,6 +69,19 @@ weather-app/
 |__ wave.yaml
 ```
 
+## Screenshots
+![image](https://github.com/user-attachments/assets/065b8710-fe50-42d4-ab65-739211f51240)
+![image](https://github.com/user-attachments/assets/2e182f2d-f3e0-4508-a088-4118b0adb70b)
+![image](https://github.com/user-attachments/assets/a3c8254e-0e43-4da5-b507-6a5458592184)
+![image](https://github.com/user-attachments/assets/70b12d55-e663-4181-bad5-acea1e83975a)
+![image](https://github.com/user-attachments/assets/be16232b-ae6a-4c78-ab09-12d61e48b264)
+![image](https://github.com/user-attachments/assets/2545e79a-7bdb-4ad2-b665-d511db143a3b)
+
+## demo-video
+
+
+
+
 ## API Information
 
 This application uses the Open-Meteo API (https://open-meteo.com/) which provides:
