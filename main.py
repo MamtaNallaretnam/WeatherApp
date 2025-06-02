@@ -40,20 +40,43 @@ async def serve(q: Q):
         await q.page.save()
 
 async def handle_toggle_theme(q: Q):
+    # Initialize theme if not exists (safety check)
+    if not hasattr(q.client, 'theme') or q.client.theme is None:
+        q.client.theme = 'h2o-dark'
+    
     print(f"Toggling theme. Current: {q.client.theme}")
-    q.client.theme = 'h2o-light' if q.client.theme == 'h2o-dark' else 'h2o-dark'
+    print(f"Toggle state received: {q.args.toggle_theme}")
+    print(f"All args: {vars(q.args)}")
+    
+    # The toggle value in q.args represents the NEW state after clicking
+    # True = Light theme, False = Dark theme
+    if hasattr(q.args, 'toggle_theme'):
+        new_theme = 'h2o-light' if q.args.toggle_theme else 'h2o-dark'
+        print(f"Setting theme based on toggle value: {q.args.toggle_theme} -> {new_theme}")
+        q.client.theme = new_theme
+    else:
+        # Fallback: manual toggle (shouldn't happen with trigger=True)
+        old_theme = q.client.theme
+        q.client.theme = 'h2o-light' if q.client.theme == 'h2o-dark' else 'h2o-dark'
+        print(f"Manual toggle: {old_theme} -> {q.client.theme}")
+    
+    print(f"Final theme: {q.client.theme}")
+    
+    # Preserve current search if it exists
+    current_search = ''
+    if hasattr(q.args, 'search') and q.args.search:
+        current_search = q.args.search
     
     # Update the layout with new theme
     main_app(q)
+    search_view(q)
     
-    # Re-render the current view with new theme
-    current_city = q.args.search or (q.page.get('search') and q.page['search'].search.value)
-    if current_city:
-        q.args.search = current_city
-        await handle_search(q)
-    else:
-        search_view(q)
-        await q.page.save()
+    # Restore search value if it existed
+    if current_search:
+        q.args.search = current_search
+    
+    print(f"Toggle value that will be displayed: {q.client.theme == 'h2o-light'}")
+    await q.page.save()
 
 
 # Main layout and header/footer
@@ -152,8 +175,8 @@ def search_view(q: Q):
             ),
             ui.toggle(
                 name='toggle_theme', 
-                label=f'🌙 Dark Theme' if q.client.theme == 'h2o-dark' else '☀️ Light Theme',
-                value=q.client.theme == 'h2o-dark',
+                label='☀️ Light Theme',  # Simplified label
+                value=q.client.theme == 'h2o-light',  # True when light theme is active
                 trigger=True
             )
         ]
@@ -478,9 +501,26 @@ async def handle_toggle_unit(q: Q):
     print(f"Toggling temperature unit. Current: {q.client.temperature_unit}")
     q.client.temperature_unit = 'F' if q.client.temperature_unit == 'C' else 'C'
 
-    current_city = q.args.search or (q.page.get('search') and q.page['search'].search.value)
+    current_city = None
+     # First check if we have a search value in args
+    if hasattr(q.args, 'search') and q.args.search:
+        # Handle case where search might be a Ref object
+        if hasattr(q.args.search, 'value'):
+            current_city = q.args.search.value
+        elif isinstance(q.args.search, str):
+            current_city = q.args.search
+    
+    # If no current city from args, try to get it from the page
+    if not current_city:
+        try:
+            search_card = q.page['search']
+            if search_card and hasattr(search_card, 'search') and hasattr(search_card.search, 'value'):
+                current_city = search_card.search.value
+        except (KeyError, AttributeError):
+            current_city = None
+
     if current_city:
-        q.args.search = current_city
+        q.args.search = str(current_city)
         await handle_search(q)
     else:
         search_view(q)
